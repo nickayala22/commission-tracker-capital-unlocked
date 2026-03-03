@@ -33,6 +33,8 @@
   .btn-success{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.25)}.btn-success:hover{background:rgba(34,197,94,.25)}
   .btn-sm{padding:6px 12px;font-size:12px}
   .btn-full{width:100%;justify-content:center}
+  .btn-ghost{background:none;border:1px solid var(--border2);color:var(--text2)}.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-ghost.active{background:rgba(79,142,247,.12);border-color:var(--accent);color:var(--accent)}
   .error-msg{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);border-radius:7px;color:var(--red);padding:10px 13px;font-size:13px;margin-bottom:16px;display:none}
   #app{display:none;min-height:100vh}
   .topbar{display:none;position:fixed;top:0;left:0;right:0;height:54px;background:var(--surface);border-bottom:1px solid var(--border);align-items:center;justify-content:space-between;padding:0 16px;z-index:200}
@@ -69,7 +71,7 @@
   .tier-11{background:rgba(79,142,247,.15);color:var(--accent);border:1px solid rgba(79,142,247,.3)}
   .tier-12{background:rgba(245,158,11,.15);color:var(--yellow);border:1px solid rgba(245,158,11,.3)}
   .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px}
-  .table-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+  .table-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px}
   .table-title{font-size:14px;font-weight:600}
   .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;min-width:480px}
@@ -85,6 +87,18 @@
   .status-unpaid{background:rgba(83,92,110,.15);color:var(--text2);border:1px solid var(--border2)}
   .mono{font-family:var(--mono)}.green{color:var(--green)}.yellow{color:var(--yellow)}
   .actions-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+
+  /* DATE FILTER BAR */
+  .filter-bar{display:flex;align-items:center;gap:8px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap}
+  .filter-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-right:4px;white-space:nowrap}
+  .filter-quick{display:flex;gap:6px;flex-wrap:wrap}
+  .filter-divider{width:1px;height:20px;background:var(--border2);margin:0 4px}
+  .filter-dates{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .filter-dates input[type=date]{background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:5px 10px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none;transition:border-color .15s;cursor:pointer}
+  .filter-dates input[type=date]:focus{border-color:var(--accent)}
+  .filter-sep{font-size:12px;color:var(--text3)}
+  .filter-summary{font-size:12px;color:var(--text2);margin-left:auto;white-space:nowrap}
+
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;display:none;align-items:center;justify-content:center;padding:16px}
   .modal-overlay.open{display:flex}
   .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;width:100%;max-width:460px;max-height:90vh;overflow-y:auto;box-shadow:0 32px 80px rgba(0,0,0,.6)}
@@ -127,10 +141,11 @@
     #toast{bottom:16px;right:16px;left:16px;max-width:none}
     .modal-footer{justify-content:stretch}
     .modal-footer .btn{flex:1;justify-content:center}
+    .filter-bar{gap:6px}
+    .filter-divider{display:none}
+    .filter-summary{margin-left:0;width:100%}
   }
-  @media(max-width:420px){
-    .login-card{padding:28px 20px}
-  }
+  @media(max-width:420px){.login-card{padding:28px 20px}}
 </style>
 </head>
 <body>
@@ -179,7 +194,6 @@
     <div class="modal-footer" id="modal-footer"></div>
   </div>
 </div>
-
 <div id="toast"></div>
 
 <script>
@@ -190,9 +204,80 @@ const{createClient}=supabase;
 const db=createClient(SUPABASE_URL,SUPABASE_KEY);
 let currentUser=null,currentPage='dashboard';
 
+// active filter state per page
+const filterState={
+  'all-sales':{from:'',to:'',preset:'month'},
+  'pending':{from:'',to:'',preset:'all'},
+  'my-sales':{from:'',to:'',preset:'month'},
+};
+
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebar-overlay').classList.toggle('open')}
 function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebar-overlay').classList.remove('open')}
 
+// ---- DATE HELPERS ----
+function monthRange(offset){
+  const now=new Date();
+  const y=now.getFullYear(),m=now.getMonth()+offset;
+  const d=new Date(y,m,1);
+  const from=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+  const last=new Date(d.getFullYear(),d.getMonth()+1,0);
+  const to=`${last.getFullYear()}-${String(last.getMonth()+1).padStart(2,'0')}-${String(last.getDate()).padStart(2,'0')}`;
+  return{from,to};
+}
+function monthLabel(offset){
+  const now=new Date();const d=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  return d.toLocaleString('en-US',{month:'short',year:'numeric'});
+}
+function applyPreset(page,preset){
+  const s=filterState[page];
+  s.preset=preset;
+  if(preset==='all'){s.from='';s.to=''}
+  else if(preset==='month'){const r=monthRange(0);s.from=r.from;s.to=r.to}
+  else if(preset==='last'){const r=monthRange(-1);s.from=r.from;s.to=r.to}
+  else if(preset==='ytd'){const now=new Date();s.from=`${now.getFullYear()}-01-01`;s.to=new Date().toISOString().slice(0,10)}
+  refreshFilteredTable(page);
+  updateFilterUI(page);
+}
+function applyCustomDate(page){
+  const from=document.getElementById(`filter-from-${page}`).value;
+  const to=document.getElementById(`filter-to-${page}`).value;
+  filterState[page].from=from;filterState[page].to=to;filterState[page].preset='custom';
+  refreshFilteredTable(page);updateFilterUI(page);
+}
+function updateFilterUI(page){
+  const s=filterState[page];
+  ['all','month','last','ytd','custom'].forEach(p=>{
+    const el=document.getElementById(`preset-${p}-${page}`);
+    if(el)el.classList.toggle('active',s.preset===p);
+  });
+  const sum=document.getElementById(`filter-summary-${page}`);
+  if(sum){
+    if(!s.from&&!s.to)sum.textContent='Showing all time';
+    else sum.textContent=`${s.from||'start'} to ${s.to||'today'}`;
+  }
+}
+function filterBarHTML(page){
+  const s=filterState[page];
+  const pid=page;
+  return`<div class="filter-bar">
+    <span class="filter-label">Filter</span>
+    <div class="filter-quick">
+      <button id="preset-all-${pid}" class="btn btn-ghost btn-sm ${s.preset==='all'?'active':''}" onclick="applyPreset('${pid}','all')">All Time</button>
+      <button id="preset-month-${pid}" class="btn btn-ghost btn-sm ${s.preset==='month'?'active':''}" onclick="applyPreset('${pid}','month')">${monthLabel(0)}</button>
+      <button id="preset-last-${pid}" class="btn btn-ghost btn-sm ${s.preset==='last'?'active':''}" onclick="applyPreset('${pid}','last')">${monthLabel(-1)}</button>
+      <button id="preset-ytd-${pid}" class="btn btn-ghost btn-sm ${s.preset==='ytd'?'active':''}" onclick="applyPreset('${pid}','ytd')">YTD</button>
+    </div>
+    <div class="filter-divider"></div>
+    <div class="filter-dates">
+      <input type="date" id="filter-from-${pid}" value="${s.from}" onchange="applyCustomDate('${pid}')">
+      <span class="filter-sep">to</span>
+      <input type="date" id="filter-to-${pid}" value="${s.to}" onchange="applyCustomDate('${pid}')">
+    </div>
+    <span class="filter-summary" id="filter-summary-${pid}">${!s.from&&!s.to?'Showing all time':s.from+' to '+s.to}</span>
+  </div>`;
+}
+
+// ---- AUTH ----
 async function doLogin(){
   const name=document.getElementById('login-name').value.trim();
   const pass=document.getElementById('login-pass').value.trim();
@@ -231,6 +316,7 @@ function navigate(page){
   pages[page]();
 }
 
+// ---- TIER LOGIC ----
 function getTier(v){return v>=200000?12:v>=100000?11:10}
 function commRate(t){return t/100}
 function getBonus(t){return t===12?2000:t===11?1000:0}
@@ -242,6 +328,55 @@ function tierProgress(v){
 
 const pages={dashboard:renderDashboard,'all-sales':renderAllSales,pending:renderPending,reps:renderReps,payouts:renderPayouts,'my-sales':renderMySales,'log-sale':renderLogSale,'my-payouts':renderMyPayouts};
 
+// ---- FILTERED TABLE REFRESH (no full page reload) ----
+async function refreshFilteredTable(page){
+  if(page==='all-sales'){
+    const tbody=document.getElementById('sales-tbody');
+    if(!tbody)return;
+    tbody.innerHTML='<tr><td colspan="8" class="loading">Loading...</td></tr>';
+    const s=filterState[page];
+    let q=db.from('sales').select('*, reps(name)').order('sale_date',{ascending:false});
+    if(s.from)q=q.gte('sale_date',s.from);
+    if(s.to)q=q.lte('sale_date',s.to);
+    const{data:sales}=await q;
+    tbody.innerHTML=renderSalesRows(sales||[],true);
+    const sum=document.getElementById('sales-count');
+    if(sum)sum.textContent=`${(sales||[]).length} sales`;
+  } else if(page==='pending'){
+    const tbody=document.getElementById('pending-tbody');
+    if(!tbody)return;
+    tbody.innerHTML='<tr><td colspan="7" class="loading">Loading...</td></tr>';
+    const s=filterState[page];
+    let q=db.from('sales').select('*, reps(name,tier)').eq('status','pending').order('sale_date',{ascending:false});
+    if(s.from)q=q.gte('sale_date',s.from);
+    if(s.to)q=q.lte('sale_date',s.to);
+    const{data:sales}=await q;
+    tbody.innerHTML=renderPendingRows(sales||[]);
+    const sub=document.getElementById('pending-count');
+    if(sub)sub.textContent=`${(sales||[]).length} sales waiting`;
+  } else if(page==='my-sales'){
+    const tbody=document.getElementById('mysales-tbody');
+    if(!tbody)return;
+    tbody.innerHTML='<tr><td colspan="6" class="loading">Loading...</td></tr>';
+    const s=filterState[page];
+    let q=db.from('sales').select('*').eq('rep_id',currentUser.id).order('sale_date',{ascending:false});
+    if(s.from)q=q.gte('sale_date',s.from);
+    if(s.to)q=q.lte('sale_date',s.to);
+    const{data:sales}=await q;
+    const{data:rep}=await db.from('reps').select('tier').eq('id',currentUser.id).single();
+    const tier=rep?.tier||10;
+    tbody.innerHTML=renderMySalesRows(sales||[],tier);
+    // update summary stats for filtered range
+    const approved=(sales||[]).filter(x=>x.status==='approved');
+    const vol=approved.reduce((a,b)=>a+(b.amount||0),0);
+    const comm=approved.reduce((a,b)=>a+(b.commission||0),0);
+    const volEl=document.getElementById('mysales-vol');const commEl=document.getElementById('mysales-comm');
+    if(volEl)volEl.textContent=fmt(vol);if(commEl)commEl.textContent=fmt(comm);
+    const sumEl=document.getElementById('mysales-count');if(sumEl)sumEl.textContent=`${(sales||[]).length} sales`;
+  }
+}
+
+// ---- DASHBOARD ----
 async function renderDashboard(){
   const main=document.getElementById('main-content');
   if(currentUser.role==='admin'){
@@ -283,8 +418,7 @@ async function renderDashboard(){
     const pendingSales=(allSales||[]).filter(s=>s.status==='pending');
     const now=new Date();const start=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
     const monthlyVolume=approved.filter(s=>s.sale_date>=start).reduce((a,b)=>a+(b.amount||0),0);
-    const tier=rep?.tier||10;
-    const bonus=getBonus(tier);
+    const tier=rep?.tier||10;const bonus=getBonus(tier);
     const prog=tierProgress(monthlyVolume);
     const pendingEst=pendingSales.reduce((a,b)=>a+(b.amount||0)*commRate(tier),0);
     main.innerHTML=`
@@ -315,31 +449,58 @@ function commCell(sale,repTier){
   return'<span style="color:var(--text3)">&#8212;</span>';
 }
 
+// ---- ALL SALES (ADMIN) ----
 async function renderAllSales(){
   const main=document.getElementById('main-content');
-  const{data:sales}=await db.from('sales').select('*, reps(name)').order('created_at',{ascending:false});
-  main.innerHTML=`<div class="page-header"><div><div class="page-title">All Sales</div><div class="page-sub">Every logged sale</div></div><button class="btn btn-secondary" onclick="exportCSV()">&#8595; Export CSV</button></div>
-  <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Amount</th><th>Tier</th><th>Commission</th><th>Status</th><th>Actions</th></tr></thead><tbody>${renderSalesRows(sales||[])}</tbody></table></div></div>`;
+  const s=filterState['all-sales'];
+  let q=db.from('sales').select('*, reps(name)').order('sale_date',{ascending:false});
+  if(s.from)q=q.gte('sale_date',s.from);
+  if(s.to)q=q.lte('sale_date',s.to);
+  const{data:sales}=await q;
+  main.innerHTML=`
+    <div class="page-header">
+      <div><div class="page-title">All Sales</div><div class="page-sub" id="sales-count">${(sales||[]).length} sales</div></div>
+      <button class="btn btn-secondary" onclick="exportCSVFiltered()">&#8595; Export CSV</button>
+    </div>
+    <div class="table-wrap">
+      ${filterBarHTML('all-sales')}
+      <div class="table-scroll"><table><thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Amount</th><th>Tier</th><th>Commission</th><th>Status</th><th>Actions</th></tr></thead><tbody id="sales-tbody">${renderSalesRows(sales||[],true)}</tbody></table></div>
+    </div>`;
 }
-function renderSalesRows(sales){
-  if(!sales.length)return'<tr><td colspan="8" class="empty-state">No sales found.</td></tr>';
+function renderSalesRows(sales,admin=false){
+  if(!sales.length)return`<tr><td colspan="${admin?8:6}" class="empty-state">No sales found for this date range.</td></tr>`;
   return sales.map(s=>{
     const est=(s.amount||0)*commRate(s.tier||10);
     const commDisplay=s.status==='approved'?`<span class="green mono">${fmt(s.commission)}</span>`:s.status==='pending'?`<span class="est-badge">~${fmt(est)}</span>`:'&#8212;';
-    return`<tr><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td><b>${s.reps?.name||'&#8212;'}</b></td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td>${tierBadge(s.tier||10)}</td><td>${commDisplay}</td><td>${statusBadge(s.status)}</td><td><div class="actions-row">${s.status==='pending'?`<button class="btn btn-success btn-sm" onclick="approveSale('${s.id}')">&#10003;</button><button class="btn btn-danger btn-sm" onclick="rejectSale('${s.id}')">&#10005;</button>`:''}<button class="btn btn-secondary btn-sm" onclick="editSale('${s.id}')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteSale('${s.id}')">Del</button></div></td></tr>`;
+    if(admin)return`<tr><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td><b>${s.reps?.name||'&#8212;'}</b></td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td>${tierBadge(s.tier||10)}</td><td>${commDisplay}</td><td>${statusBadge(s.status)}</td><td><div class="actions-row">${s.status==='pending'?`<button class="btn btn-success btn-sm" onclick="approveSale('${s.id}')">&#10003;</button><button class="btn btn-danger btn-sm" onclick="rejectSale('${s.id}')">&#10005;</button>`:''}<button class="btn btn-secondary btn-sm" onclick="editSale('${s.id}')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteSale('${s.id}')">Del</button></div></td></tr>`;
+    return`<tr><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td>${tierBadge(s.tier||10)}</td><td>${commDisplay}</td><td>${statusBadge(s.status)}</td></tr>`;
   }).join('');
 }
 
+// ---- PENDING (ADMIN) ----
 async function renderPending(){
   const main=document.getElementById('main-content');
-  const{data:sales}=await db.from('sales').select('*, reps(name,tier)').eq('status','pending').order('created_at',{ascending:false});
-  main.innerHTML=`<div class="page-header"><div><div class="page-title">Pending Approval</div><div class="page-sub">${(sales||[]).length} sales waiting</div></div></div>
-  <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Amount</th><th>Est. Commission</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${(sales||[]).length?sales.map(s=>{
+  const s=filterState['pending'];
+  let q=db.from('sales').select('*, reps(name,tier)').eq('status','pending').order('sale_date',{ascending:false});
+  if(s.from)q=q.gte('sale_date',s.from);
+  if(s.to)q=q.lte('sale_date',s.to);
+  const{data:sales}=await q;
+  main.innerHTML=`
+    <div class="page-header"><div><div class="page-title">Pending Approval</div><div class="page-sub" id="pending-count">${(sales||[]).length} sales waiting</div></div></div>
+    <div class="table-wrap">
+      ${filterBarHTML('pending')}
+      <div class="table-scroll"><table><thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Amount</th><th>Est. Commission</th><th>Notes</th><th>Actions</th></tr></thead><tbody id="pending-tbody">${renderPendingRows(sales||[])}</tbody></table></div>
+    </div>`;
+}
+function renderPendingRows(sales){
+  if(!sales.length)return'<tr><td colspan="7" class="empty-state">No pending sales for this date range.</td></tr>';
+  return sales.map(s=>{
     const tier=s.reps?.tier||s.tier||10;const est=(s.amount||0)*commRate(tier);
     return`<tr class="highlight-row"><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td><b>${s.reps?.name||'&#8212;'}</b></td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td><span class="est-badge">~${fmt(est)}</span></td><td style="color:var(--text2);font-size:12px;max-width:140px">${s.notes||'&#8212;'}</td><td><div class="actions-row"><button class="btn btn-success btn-sm" onclick="approveSale('${s.id}')">&#10003; Approve</button><button class="btn btn-danger btn-sm" onclick="rejectSale('${s.id}')">&#10005; Reject</button><button class="btn btn-secondary btn-sm" onclick="editSale('${s.id}')">Edit</button></div></td></tr>`;
-  }).join(''):'<tr><td colspan="7" class="empty-state">No pending sales.</td></tr>'}</tbody></table></div></div>`;
+  }).join('');
 }
 
+// ---- REPS (ADMIN) ----
 async function renderReps(){
   const main=document.getElementById('main-content');
   const{data:reps}=await db.from('reps').select('*').order('name');
@@ -360,6 +521,7 @@ async function buildRepsList(reps){
   return html;
 }
 
+// ---- PAYOUTS (ADMIN) ----
 async function renderPayouts(){
   const main=document.getElementById('main-content');
   const{data:payouts}=await db.from('payouts').select('*, reps(name)').order('created_at',{ascending:false});
@@ -368,15 +530,40 @@ async function renderPayouts(){
   <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Rep</th><th>Period</th><th>Volume</th><th>Commission</th><th>Bonus</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody>${(payouts||[]).length?payouts.map(p=>`<tr><td><b>${p.reps?.name||'&#8212;'}</b></td><td class="mono no-wrap">${p.period||'&#8212;'}</td><td class="mono">${fmt(p.volume||0)}</td><td class="mono">${fmt(p.commission||0)}</td><td class="mono">${p.bonus>0?'<span class="green">+'+fmt(p.bonus)+'</span>':'&#8212;'}</td><td class="mono"><b class="green">${fmt(p.amount||0)}</b></td><td>${p.status==='paid'?statusBadge('paid'):statusBadge('unpaid')}</td><td>${p.status==='unpaid'?`<button class="btn btn-success btn-sm" onclick="markPaid('${p.id}')">Mark Paid</button>`:'<span style="color:var(--text3);font-size:12px">&#8212;</span>'}</td></tr>`).join(''):'<tr><td colspan="8" class="empty-state">No payouts yet. Generate from approved sales.</td></tr>'}</tbody></table></div></div>`;
 }
 
+// ---- MY SALES (REP) ----
 async function renderMySales(){
   const main=document.getElementById('main-content');
   const{data:rep}=await db.from('reps').select('tier').eq('id',currentUser.id).single();
   const tier=rep?.tier||10;
-  const{data:sales}=await db.from('sales').select('*').eq('rep_id',currentUser.id).order('created_at',{ascending:false});
-  main.innerHTML=`<div class="page-header"><div><div class="page-title">My Sales</div></div><button class="btn btn-primary" onclick="navigate('log-sale')">+ Log Sale</button></div>
-  <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Amount</th><th>Tier</th><th>Commission</th><th>Status</th></tr></thead><tbody>${(sales||[]).length?sales.map(s=>`<tr><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td>${tierBadge(s.tier||10)}</td><td>${commCell(s,tier)}</td><td>${statusBadge(s.status)}</td></tr>`).join(''):'<tr><td colspan="6" class="empty-state">No sales yet.</td></tr>'}</tbody></table></div></div>`;
+  const s=filterState['my-sales'];
+  let q=db.from('sales').select('*').eq('rep_id',currentUser.id).order('sale_date',{ascending:false});
+  if(s.from)q=q.gte('sale_date',s.from);
+  if(s.to)q=q.lte('sale_date',s.to);
+  const{data:sales}=await q;
+  const approved=(sales||[]).filter(x=>x.status==='approved');
+  const vol=approved.reduce((a,b)=>a+(b.amount||0),0);
+  const comm=approved.reduce((a,b)=>a+(b.commission||0),0);
+  main.innerHTML=`
+    <div class="page-header">
+      <div><div class="page-title">My Sales</div></div>
+      <button class="btn btn-primary" onclick="navigate('log-sale')">+ Log Sale</button>
+    </div>
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+      <div class="stat-card"><div class="stat-label">Sales in Range</div><div class="stat-value" id="mysales-count">${(sales||[]).length}</div></div>
+      <div class="stat-card"><div class="stat-label">Approved Volume</div><div class="stat-value mono" id="mysales-vol">${fmt(vol)}</div></div>
+      <div class="stat-card"><div class="stat-label">Earned Commission</div><div class="stat-value green mono" id="mysales-comm">${fmt(comm)}</div></div>
+    </div>
+    <div class="table-wrap">
+      ${filterBarHTML('my-sales')}
+      <div class="table-scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Amount</th><th>Tier</th><th>Commission</th><th>Status</th></tr></thead><tbody id="mysales-tbody">${renderMySalesRows(sales||[],tier)}</tbody></table></div>
+    </div>`;
+}
+function renderMySalesRows(sales,tier){
+  if(!sales.length)return'<tr><td colspan="6" class="empty-state">No sales for this date range.</td></tr>';
+  return sales.map(s=>`<tr><td class="mono no-wrap">${s.sale_date||'&#8212;'}</td><td>${s.client_name||'&#8212;'}</td><td class="mono">${fmt(s.amount)}</td><td>${tierBadge(s.tier||10)}</td><td>${commCell(s,tier)}</td><td>${statusBadge(s.status)}</td></tr>`).join('');
 }
 
+// ---- LOG SALE (REP) ----
 async function renderLogSale(){
   const main=document.getElementById('main-content');
   const{data:rep}=await db.from('reps').select('tier').eq('id',currentUser.id).single();
@@ -400,6 +587,7 @@ function updateEst(tier){
   if(amt>0){d.style.display='block';v.textContent=fmt(amt*commRate(tier))}else{d.style.display='none'}
 }
 
+// ---- MY PAYOUTS (REP) ----
 async function renderMyPayouts(){
   const main=document.getElementById('main-content');
   const{data:payouts}=await db.from('payouts').select('*').eq('rep_id',currentUser.id).order('created_at',{ascending:false});
@@ -408,6 +596,7 @@ async function renderMyPayouts(){
   <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Period</th><th>Volume</th><th>Commission</th><th>Bonus</th><th>Total</th><th>Status</th></tr></thead><tbody>${(payouts||[]).length?payouts.map(p=>`<tr><td class="mono no-wrap">${p.period||'&#8212;'}</td><td class="mono">${fmt(p.volume||0)}</td><td class="mono">${fmt(p.commission||0)}</td><td class="mono">${p.bonus>0?'<span class="green">+'+fmt(p.bonus)+'</span>':'&#8212;'}</td><td class="mono"><b class="green">${fmt(p.amount||0)}</b></td><td>${p.status==='paid'?statusBadge('paid'):statusBadge('unpaid')}</td></tr>`).join(''):'<tr><td colspan="6" class="empty-state">No payouts yet.</td></tr>'}</tbody></table></div></div>`;
 }
 
+// ---- ACTIONS ----
 async function submitSale(tier){
   const client=document.getElementById('new-client').value.trim();
   const amount=parseFloat(document.getElementById('new-amount').value);
@@ -441,6 +630,7 @@ async function recalcRepTier(repId){
 }
 async function markPaid(id){await db.from('payouts').update({status:'paid',paid_at:new Date().toISOString()}).eq('id',id);toast('Marked as paid.','success');navigate('payouts')}
 
+// ---- MODALS ----
 function addRepModal(){
   openModal('Add Rep',`<div class="form-group"><label>Name</label><input type="text" id="m-name" placeholder="Rep full name"></div><div class="form-group"><label>Password</label><input type="text" id="m-pass" placeholder="Assign a password"></div><div class="form-group"><label>Starting Tier</label><select id="m-tier"><option value="10">10% &#8212; Standard</option><option value="11">11% &#8212; Silver</option><option value="12">12% &#8212; Gold</option></select></div>`,
   [{label:'Cancel',fn:closeModal,cls:'btn-secondary'},{label:'Add Rep',fn:doAddRep,cls:'btn-primary'}]);
@@ -496,11 +686,16 @@ async function doGeneratePayouts(){
   closeModal();toast(`Generated ${created} payout record(s).`,'success');navigate('payouts');
 }
 
-async function exportCSV(){
-  const{data:sales}=await db.from('sales').select('*, reps(name)').order('created_at',{ascending:false});
+// ---- EXPORTS (filtered) ----
+async function exportCSVFiltered(){
+  const s=filterState['all-sales'];
+  let q=db.from('sales').select('*, reps(name)').order('sale_date',{ascending:false});
+  if(s.from)q=q.gte('sale_date',s.from);
+  if(s.to)q=q.lte('sale_date',s.to);
+  const{data:sales}=await q;
   const rows=[['Date','Rep','Client','Amount','Tier','Commission','Status']];
   (sales||[]).forEach(s=>rows.push([s.sale_date||'',s.reps?.name||'',s.client_name||'',s.amount||0,s.tier||10,s.commission||0,s.status||'']));
-  dlCSV(rows,'sales-export.csv');
+  dlCSV(rows,`sales-${filterState['all-sales'].from||'all'}-to-${filterState['all-sales'].to||'today'}.csv`);
 }
 async function exportPayoutsCSV(){
   const{data:payouts}=await db.from('payouts').select('*, reps(name)').order('created_at',{ascending:false});
@@ -513,6 +708,7 @@ function dlCSV(rows,filename){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=filename;a.click();
 }
 
+// ---- HELPERS ----
 function fmt(n){if(!n&&n!==0)return'$0';return'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})}
 function tierBadge(t){const l={10:'10%',11:'11%',12:'12%'};const c={10:'tier-10',11:'tier-11',12:'tier-12'};return`<span class="tier-badge ${c[t]||'tier-10'}">${l[t]||t+'%'}</span>`}
 function statusBadge(s){const m={pending:['status-pending','&#9675; Pending'],approved:['status-approved','&#10003; Approved'],rejected:['status-rejected','&#10005; Rejected'],paid:['status-paid','&#10003; Paid'],unpaid:['status-unpaid','&#9675; Unpaid']};const[c,l]=m[s]||['status-pending',s];return`<span class="status-badge ${c}">${l}</span>`}
