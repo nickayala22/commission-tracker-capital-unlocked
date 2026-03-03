@@ -146,6 +146,27 @@
     .filter-summary{margin-left:0;width:100%}
   }
   @media(max-width:420px){.login-card{padding:28px 20px}}
+
+  /* HELP PAGE */
+  .help-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;display:flex;gap:16px;align-items:flex-start}
+  .help-step{width:28px;height:28px;border-radius:50%;background:rgba(79,142,247,.15);border:1px solid rgba(79,142,247,.3);color:var(--accent);font-family:var(--mono);font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+  .help-body{flex:1}
+  .help-title{font-size:15px;font-weight:600;margin-bottom:6px}
+  .help-text{font-size:13px;color:var(--text2);line-height:1.6}
+  .tier-info-card{background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:12px 16px;min-width:120px}
+  .tier-info-label{font-size:12px;color:var(--text2);margin-top:6px}
+  .tier-info-sub{font-size:11px;color:var(--green);margin-top:2px;font-family:var(--mono)}
+  /* ONBOARDING */
+  #onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:400;display:none;align-items:center;justify-content:center;padding:20px}
+  .ob-card{background:var(--surface);border:1px solid var(--border2);border-radius:14px;width:100%;max-width:420px;padding:32px;box-shadow:0 32px 80px rgba(0,0,0,.6);text-align:center}
+  .ob-icon{font-size:36px;margin-bottom:16px;line-height:1}
+  .ob-title{font-size:20px;font-weight:600;margin-bottom:10px}
+  .ob-body{font-size:14px;color:var(--text2);line-height:1.65;margin-bottom:24px}
+  .ob-progress{display:flex;gap:6px;justify-content:center;margin-bottom:24px}
+  .ob-dot{width:7px;height:7px;border-radius:50%;background:var(--border2);transition:all .2s}
+  .ob-dot.active{background:var(--accent);width:20px;border-radius:4px}
+  .ob-dot.done{background:var(--accent2)}
+  .ob-actions{display:flex;gap:10px;justify-content:center}
 </style>
 </head>
 <body>
@@ -183,6 +204,21 @@
   </div>
   <div class="main" id="main-content"><div class="loading">Loading...</div></div>
 </div>
+
+
+  <!-- ONBOARDING OVERLAY -->
+  <div id="onboarding-overlay">
+    <div class="ob-card">
+      <div class="ob-icon" id="ob-icon"></div>
+      <div class="ob-title" id="ob-title"></div>
+      <div class="ob-body" id="ob-body"></div>
+      <div class="ob-progress" id="ob-progress"></div>
+      <div class="ob-actions">
+        <button id="ob-back" class="btn btn-secondary" style="display:none" onclick="window._obBack()">&#8592; Back</button>
+        <button id="ob-btn" class="btn btn-primary" style="min-width:120px">Next</button>
+      </div>
+    </div>
+  </div>
 
 <div class="modal-overlay" id="modal-overlay">
   <div class="modal">
@@ -299,12 +335,12 @@ function launchApp(){
   document.getElementById('user-name-display').textContent=currentUser.name;
   document.getElementById('user-role-display').textContent=currentUser.role==='admin'?'Administrator':'Sales Rep';
   document.getElementById('user-avatar').textContent=currentUser.name.charAt(0).toUpperCase();
-  buildNav();navigate('dashboard');
+  buildNav();navigate('dashboard');if(currentUser.role==='rep'){const seen=localStorage.getItem('cu_onboarded_'+currentUser.id);if(!seen){setTimeout(()=>showOnboarding(),400);}}
 }
 function buildNav(){
   const nav=document.getElementById('sidebar-nav');
   const adminItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'pending',icon:'&#9203;',label:'Pending Approval'},{id:'all-sales',icon:'&#9673;',label:'All Sales'},{id:'reps',icon:'&#9678;',label:'Reps'},{id:'payouts',icon:'&#128179;',label:'Payouts'}];
-  const repItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'my-sales',icon:'&#9673;',label:'My Sales'},{id:'log-sale',icon:'+',label:'Log a Sale'},{id:'my-payouts',icon:'&#128179;',label:'My Payouts'}];
+  const repItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'my-sales',icon:'&#9673;',label:'My Sales'},{id:'log-sale',icon:'+',label:'Log a Sale'},{id:'my-payouts',icon:'&#128179;',label:'My Payouts'},{id:'help',icon:'?',label:'How It Works'}];
   const items=currentUser.role==='admin'?adminItems:repItems;
   nav.innerHTML=items.map(i=>`<div class="nav-item" id="nav-${i.id}" onclick="navigate('${i.id}');closeSidebar()"><span class="nav-icon">${i.icon}</span>${i.label}</div>`).join('');
 }
@@ -326,7 +362,7 @@ function tierProgress(v){
   return{pct:(v/100000)*100,next:100000,needed:100000-v,label:'Standard — $100K unlocks 11%'};
 }
 
-const pages={dashboard:renderDashboard,'all-sales':renderAllSales,pending:renderPending,reps:renderReps,payouts:renderPayouts,'my-sales':renderMySales,'log-sale':renderLogSale,'my-payouts':renderMyPayouts};
+const pages={dashboard:renderDashboard,'all-sales':renderAllSales,pending:renderPending,reps:renderReps,payouts:renderPayouts,'my-sales':renderMySales,'log-sale':renderLogSale,'my-payouts':renderMyPayouts,help:renderHelp};
 
 // ---- FILTERED TABLE REFRESH (no full page reload) ----
 async function refreshFilteredTable(page){
@@ -726,6 +762,105 @@ let toastTimer;
 function toast(msg,type='success'){const el=document.getElementById('toast');el.textContent=msg;el.className='show '+type;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.className='',3000)}
 
 document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target===document.getElementById('modal-overlay'))closeModal()});
+
+// ---- HELP PAGE ----
+function renderHelp(){
+  const main=document.getElementById('main-content');
+  main.innerHTML=`
+    <div class="page-header"><div><div class="page-title">How It Works</div><div class="page-sub">Everything you need to know to get paid</div></div></div>
+    <div style="max-width:680px;display:flex;flex-direction:column;gap:16px">
+
+      <div class="help-card">
+        <div class="help-step">1</div>
+        <div class="help-body">
+          <div class="help-title">Log Your Sale</div>
+          <div class="help-text">Every time you close a deal, go to <b>Log a Sale</b> in the sidebar. Enter the client name, the sale amount, and the date it closed. Add any notes that help admin verify it. Hit Submit — it goes into the system as Pending.</div>
+        </div>
+      </div>
+
+      <div class="help-card">
+        <div class="help-step">2</div>
+        <div class="help-body">
+          <div class="help-title">Admin Reviews and Approves</div>
+          <div class="help-text">Your sale sits as <span class="status-badge status-pending" style="font-size:11px">&#9675; Pending</span> until admin approves it. Once approved it becomes <span class="status-badge status-approved" style="font-size:11px">&#10003; Approved</span> and your commission is locked in. You'll see the final amount in My Sales.</div>
+        </div>
+      </div>
+
+      <div class="help-card">
+        <div class="help-step">3</div>
+        <div class="help-body">
+          <div class="help-title">Commission Tiers</div>
+          <div class="help-text">Your commission rate is based on your approved monthly volume. Tiers are permanent once unlocked — you never go back down.</div>
+          <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+            <div class="tier-info-card"><div>${tierBadge(10)}</div><div class="tier-info-label">Starting rate</div><div class="tier-info-sub">Default</div></div>
+            <div class="tier-info-card"><div>${tierBadge(11)}</div><div class="tier-info-label">$100K/mo volume</div><div class="tier-info-sub">+ $1,000 bonus</div></div>
+            <div class="tier-info-card"><div>${tierBadge(12)}</div><div class="tier-info-label">$200K/mo volume</div><div class="tier-info-sub">+ $2,000 bonus</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="help-card">
+        <div class="help-step">4</div>
+        <div class="help-body">
+          <div class="help-title">Getting Paid</div>
+          <div class="help-text">Commissions are calculated and paid out monthly. Check <b>My Payouts</b> to see what's owed and what's been paid. Payouts are processed on the 5th of each month for the previous month's approved sales.</div>
+        </div>
+      </div>
+
+      <div class="help-card">
+        <div class="help-step">5</div>
+        <div class="help-body">
+          <div class="help-title">Tracking Your Progress</div>
+          <div class="help-text">Your <b>Dashboard</b> shows your current tier, monthly volume, progress toward the next tier, and any pending sales. Use the <b>My Sales</b> page with date filters to pull up any month and see exactly what you earned.</div>
+        </div>
+      </div>
+
+      <div style="background:rgba(79,142,247,.06);border:1px solid rgba(79,142,247,.15);border-radius:10px;padding:18px 20px">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Quick Reference</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:var(--text2)">
+          <div>&#10003; Log a sale after every close</div>
+          <div>&#10003; Check Dashboard for tier progress</div>
+          <div>&#10003; Pending = waiting on admin</div>
+          <div>&#10003; Payouts processed on the 5th</div>
+          <div>&#10003; Tiers never go back down</div>
+          <div>&#10003; Filter My Sales by month to verify</div>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+// ---- ONBOARDING MODAL ----
+function showOnboarding(){
+  const steps=[
+    {icon:'&#9673;',title:'Log every sale',body:'After you close a deal, go to <b>Log a Sale</b> in the sidebar. Enter the client, amount, and date. Takes 30 seconds. Admin reviews and approves it.'},
+    {icon:'&#128204;',title:'Watch your tier climb',body:'You start at 10% commission. Hit $100K in approved monthly volume and you unlock 11% permanently, plus a $1,000 bonus. Hit $200K and it\'s 12% with a $2,000 bonus.'},
+    {icon:'&#128179;',title:'Get paid on the 5th',body:'Commissions are calculated from your approved sales each month. Check <b>My Payouts</b> to see what\'s coming. Paid out on the 5th.'},
+    {icon:'&#10003;',title:'You\'re all set',body:'Dashboard shows your progress. My Sales lets you filter by date. If you ever have questions, hit the <b>How It Works</b> tab in the sidebar.'},
+  ];
+  let step=0;
+  function renderStep(){
+    const s=steps[step];
+    const isLast=step===steps.length-1;
+    document.getElementById('ob-icon').innerHTML=s.icon;
+    document.getElementById('ob-title').textContent=s.title;
+    document.getElementById('ob-body').innerHTML=s.body;
+    document.getElementById('ob-progress').innerHTML=steps.map((_,i)=>`<div class="ob-dot ${i===step?'active':i<step?'done':''}"></div>`).join('');
+    document.getElementById('ob-btn').textContent=isLast?'Got it, let\'s go':'Next';
+    document.getElementById('ob-btn').onclick=isLast?dismissOnboarding:()=>{step++;renderStep();};
+    if(step>0){document.getElementById('ob-back').style.display='inline-flex';}
+    else{document.getElementById('ob-back').style.display='none';}
+  }
+  function dismissOnboarding(){
+    localStorage.setItem('cu_onboarded_'+currentUser.id,'1');
+    document.getElementById('onboarding-overlay').style.display='none';
+  }
+  document.getElementById('onboarding-overlay').style.display='flex';
+  renderStep();
+  window._obBack=()=>{if(step>0){step--;renderStep();}};
+}
+
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('login-screen').style.display!=='none')doLogin();if(e.key==='Escape')closeModal()});
 </script>
 </body>
