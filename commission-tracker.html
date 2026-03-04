@@ -563,10 +563,86 @@ async function buildRepsList(reps){
 // ---- PAYOUTS (ADMIN) ----
 async function renderPayouts(){
   const main=document.getElementById('main-content');
+  main.innerHTML='<div class="loading">Loading...</div>';
+
+  const now=new Date();
+  const curPeriod=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+  const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);
+
+  const{data:reps}=await db.from('reps').select('*').order('name');
   const{data:payouts}=await db.from('payouts').select('*, reps(name)').order('created_at',{ascending:false});
   const unpaid=(payouts||[]).filter(p=>p.status==='unpaid').reduce((a,b)=>a+(b.amount||0),0);
-  main.innerHTML=`<div class="page-header"><div><div class="page-title">Payouts</div><div class="page-sub">${fmt(unpaid)} outstanding</div></div><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn btn-secondary" onclick="exportPayoutsCSV()">&#8595; Export CSV</button><button class="btn btn-primary" onclick="generatePayoutsModal()">Generate Payouts</button></div></div>
-  <div class="table-wrap"><div class="table-scroll"><table><thead><tr><th>Rep</th><th>Period</th><th>Volume</th><th>Commission</th><th>Bonus</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody>${(payouts||[]).length?payouts.map(p=>`<tr><td><b>${p.reps?.name||'&#8212;'}</b></td><td class="mono no-wrap">${p.period||'&#8212;'}</td><td class="mono">${fmt(p.volume||0)}</td><td class="mono">${fmt(p.commission||0)}</td><td class="mono">${p.bonus>0?'<span class="green">+'+fmt(p.bonus)+'</span>':'&#8212;'}</td><td class="mono"><b class="green">${fmt(p.amount||0)}</b></td><td>${p.status==='paid'?statusBadge('paid'):statusBadge('unpaid')}</td><td>${p.status==='unpaid'?`<button class="btn btn-success btn-sm" onclick="markPaid('${p.id}')">Mark Paid</button>`:'<span style="color:var(--text3);font-size:12px">&#8212;</span>'}</td></tr>`).join(''):'<tr><td colspan="8" class="empty-state">No payouts yet. Generate from approved sales.</td></tr>'}</tbody></table></div></div>`;
+
+  // Build live summary per rep for current month
+  const repSummaries=[];
+  let liveTotal=0;
+  for(const rep of(reps||[])){
+    const{data:sales}=await db.from('sales').select('amount,commission').eq('rep_id',rep.id).eq('status','approved').gte('sale_date',monthStart).lte('sale_date',monthEnd);
+    const{data:cbs}=await db.from('chargebacks').select('amount').eq('rep_id',rep.id).gte('chargeback_date',monthStart).lte('chargeback_date',monthEnd);
+    const volume=(sales||[]).reduce((a,b)=>a+(b.amount||0),0);
+    const commission=(sales||[]).reduce((a,b)=>a+(b.commission||0),0);
+    const cbTotal=(cbs||[]).reduce((a,b)=>a+(b.amount||0),0);
+    const cbDeduct=cbTotal*commRate(rep.tier||10);
+    const bonus=getBonus(rep.tier||10);
+    const net=Math.max(0,commission+bonus-cbDeduct);
+    if(volume>0||cbTotal>0)repSummaries.push({rep,volume,commission,bonus,cbTotal,cbDeduct,net});
+    liveTotal+=net;
+  }
+
+  const summaryRows=repSummaries.length?repSummaries.map(r=>`
+    <tr>
+      <td><b>${r.rep.name}</b></td>
+      <td>${tierBadge(r.rep.tier||10)}</td>
+      <td class="mono">${fmt(r.volume)}</td>
+      <td class="mono green">${fmt(r.commission)}</td>
+      <td class="mono">${r.bonus>0?'<span class="green">+'+fmt(r.bonus)+'</span>':'&#8212;'}</td>
+      <td class="mono">${r.cbTotal>0?'<span style="color:var(--red)">-'+fmt(r.cbDeduct)+'</span>':'&#8212;'}</td>
+      <td class="mono"><b class="green">${fmt(r.net)}</b></td>
+    </tr>`).join('')
+    :'<tr><td colspan="7" class="empty-state" style="padding:20px">No approved sales this month yet.</td></tr>';
+
+  main.innerHTML=`
+    <div class="page-header">
+      <div><div class="page-title">Payouts</div><div class="page-sub">${fmt(unpaid)} in prior unpaid payouts</div></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="exportPayoutsCSV()">&#8595; Export CSV</button>
+        <button class="btn btn-primary" onclick="generatePayoutsModal()">Generate Payouts</button>
+      </div>
+    </div>
+
+    <!-- LIVE THIS MONTH SUMMARY -->
+    <div class="table-wrap" style="margin-bottom:24px;border-color:rgba(79,142,247,.3)">
+      <div class="table-header" style="background:rgba(79,142,247,.06)">
+        <div>
+          <div class="table-title" style="color:var(--accent)">&#128197; ${monthLabel(0)} — Live Payout Preview</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:3px">Based on approved sales so far. Updates in real time. Generate on the 5th to lock it in.</div>
+        </div>
+        <div class="mono" style="font-size:18px;font-weight:600;color:var(--green)">${fmt(liveTotal)} <span style="font-size:12px;color:var(--text3);font-family:var(--sans);font-weight:400">total owed</span></div>
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Rep</th><th>Tier</th><th>Volume</th><th>Commission</th><th>Bonus</th><th>CB Deduction</th><th>Net Owed</th></tr></thead>
+        <tbody>${summaryRows}</tbody>
+      </table></div>
+    </div>
+
+    <!-- PAYOUT HISTORY -->
+    <div class="table-wrap">
+      <div class="table-header"><div class="table-title">Payout History</div></div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Rep</th><th>Period</th><th>Volume</th><th>Commission</th><th>Bonus</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${(payouts||[]).length?payouts.map(p=>`<tr>
+          <td><b>${p.reps?.name||'&#8212;'}</b></td>
+          <td class="mono no-wrap">${p.period||'&#8212;'}</td>
+          <td class="mono">${fmt(p.volume||0)}</td>
+          <td class="mono">${fmt(p.commission||0)}</td>
+          <td class="mono">${p.bonus>0?'<span class="green">+'+fmt(p.bonus)+'</span>':'&#8212;'}</td>
+          <td class="mono"><b class="green">${fmt(p.amount||0)}</b></td>
+          <td>${p.status==='paid'?statusBadge('paid'):statusBadge('unpaid')}</td>
+          <td>${p.status==='unpaid'?`<button class="btn btn-success btn-sm" onclick="markPaid('${p.id}')">Mark Paid</button>`:'<span style="color:var(--text3);font-size:12px">&#8212;</span>'}</td>
+        </tr>`).join(''):'<tr><td colspan="8" class="empty-state">No payouts generated yet.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
 }
 
 // ---- MY SALES (REP) ----
