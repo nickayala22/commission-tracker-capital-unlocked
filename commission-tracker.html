@@ -64,7 +64,7 @@
   .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px}
   .stat-label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
   .stat-value{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--text);line-height:1}
-  .stat-value.green{color:var(--green)}.stat-value.blue{color:var(--accent)}.stat-value.yellow{color:var(--yellow)}
+  .stat-value.green{color:var(--green)}.stat-value.blue{color:var(--accent)}.stat-value.yellow{color:var(--yellow)}.stat-value.red{color:var(--red)}
   .stat-sub{font-size:11px;color:var(--text3);margin-top:6px}
   .tier-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;font-family:var(--mono)}
   .tier-10{background:rgba(83,92,110,.2);color:var(--text2);border:1px solid var(--border2)}
@@ -339,8 +339,8 @@ function launchApp(){
 }
 function buildNav(){
   const nav=document.getElementById('sidebar-nav');
-  const adminItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'pending',icon:'&#9203;',label:'Pending Approval'},{id:'all-sales',icon:'&#9673;',label:'All Sales'},{id:'reps',icon:'&#9678;',label:'Reps'},{id:'payouts',icon:'&#128179;',label:'Payouts'}];
-  const repItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'my-sales',icon:'&#9673;',label:'My Sales'},{id:'log-sale',icon:'+',label:'Log a Sale'},{id:'my-payouts',icon:'&#128179;',label:'My Payouts'},{id:'help',icon:'?',label:'How It Works'}];
+  const adminItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'pending',icon:'&#9203;',label:'Pending Approval'},{id:'all-sales',icon:'&#9673;',label:'All Sales'},{id:'reps',icon:'&#9678;',label:'Reps'},{id:'payouts',icon:'&#128179;',label:'Payouts'},{id:'chargebacks',icon:'&#9888;',label:'Chargebacks'}];
+  const repItems=[{id:'dashboard',icon:'&#9672;',label:'Dashboard'},{id:'my-sales',icon:'&#9673;',label:'My Sales'},{id:'log-sale',icon:'+',label:'Log a Sale'},{id:'my-payouts',icon:'&#128179;',label:'My Payouts'},{id:'help',icon:'?',label:'How It Works'},{id:'chargebacks',icon:'&#9888;',label:'Chargebacks'}];
   const items=currentUser.role==='admin'?adminItems:repItems;
   nav.innerHTML=items.map(i=>`<div class="nav-item" id="nav-${i.id}" onclick="navigate('${i.id}');closeSidebar()"><span class="nav-icon">${i.icon}</span>${i.label}</div>`).join('');
 }
@@ -362,7 +362,7 @@ function tierProgress(v){
   return{pct:(v/100000)*100,next:100000,needed:100000-v,label:'Standard — $100K unlocks 11%'};
 }
 
-const pages={dashboard:renderDashboard,'all-sales':renderAllSales,pending:renderPending,reps:renderReps,payouts:renderPayouts,'my-sales':renderMySales,'log-sale':renderLogSale,'my-payouts':renderMyPayouts,help:renderHelp};
+const pages={dashboard:renderDashboard,'all-sales':renderAllSales,pending:renderPending,reps:renderReps,payouts:renderPayouts,'my-sales':renderMySales,'log-sale':renderLogSale,'my-payouts':renderMyPayouts,help:renderHelp,chargebacks:renderChargebacks};
 
 // ---- FILTERED TABLE REFRESH (no full page reload) ----
 async function refreshFilteredTable(page){
@@ -424,6 +424,8 @@ async function renderDashboard(){
     const totalVolume=approved.reduce((a,b)=>a+(b.amount||0),0);
     const totalComm=approved.reduce((a,b)=>a+(b.commission||0),0);
     const unpaidPayout=(payouts||[]).filter(p=>p.status==='unpaid').reduce((a,b)=>a+(b.amount||0),0);
+    const{data:allCBs}=await db.from('chargebacks').select('amount');
+    const totalCBs=(allCBs||[]).length;
     main.innerHTML=`
       <div class="page-header"><div><div class="page-title">Dashboard</div><div class="page-sub">All-time overview</div></div></div>
       <div class="stats-grid">
@@ -431,6 +433,7 @@ async function renderDashboard(){
         <div class="stat-card"><div class="stat-label">Pending Approval</div><div class="stat-value yellow">${pending}</div><div class="stat-sub">needs review</div></div>
         <div class="stat-card"><div class="stat-label">Approved Volume</div><div class="stat-value">${fmt(totalVolume)}</div></div>
         <div class="stat-card"><div class="stat-label">Total Commissions</div><div class="stat-value green">${fmt(totalComm)}</div><div class="stat-sub">${fmt(unpaidPayout)} unpaid</div></div>
+        <div class="stat-card" style="grid-column:span 4"><div class="stat-label">Chargebacks This Month</div><div class="stat-value red" id="cb-count">&#8212;</div><div class="stat-sub">click Chargebacks tab to manage</div></div>
       </div>
       <div class="table-wrap">
         <div class="table-header"><div class="table-title">Rep Leaderboard</div></div>
@@ -717,7 +720,12 @@ async function doGeneratePayouts(){
     const{data:sales}=await db.from('sales').select('*').eq('rep_id',rep.id).eq('status','approved').gte('sale_date',start).lte('sale_date',end);
     if(!sales||!sales.length)continue;
     const volume=sales.reduce((a,b)=>a+(b.amount||0),0);const commission=sales.reduce((a,b)=>a+(b.commission||0),0);const tier=rep.tier||getTier(volume);const bonus=getBonus(tier);
-    await db.from('payouts').insert({rep_id:rep.id,period,volume,commission,bonus,amount:commission+bonus,status:'unpaid'});created++;
+    // deduct chargebacks for this period
+    const{data:cbs}=await db.from('chargebacks').select('amount').eq('rep_id',rep.id).gte('chargeback_date',start).lte('chargeback_date',end);
+    const cbTotal=(cbs||[]).reduce((a,b)=>a+(b.amount||0),0);
+    const cbDeduct=cbTotal*commRate(tier);
+    const netAmount=Math.max(0,commission+bonus-cbDeduct);
+    await db.from('payouts').insert({rep_id:rep.id,period,volume,commission,bonus,chargebacks:cbTotal,cb_deduction:cbDeduct,amount:netAmount,status:'unpaid'});created++;
   }
   closeModal();toast(`Generated ${created} payout record(s).`,'success');navigate('payouts');
 }
@@ -762,6 +770,132 @@ let toastTimer;
 function toast(msg,type='success'){const el=document.getElementById('toast');el.textContent=msg;el.className='show '+type;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.className='',3000)}
 
 document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target===document.getElementById('modal-overlay'))closeModal()});
+
+
+// ---- CHARGEBACKS ----
+async function renderChargebacks(){
+  const main=document.getElementById('main-content');
+  const isAdmin=currentUser.role==='admin';
+
+  if(isAdmin){
+    const{data:reps}=await db.from('reps').select('*').order('name');
+    const now=new Date();
+    const start=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+    const end=new Date().toISOString().slice(0,10);
+    const{data:allCBs}=await db.from('chargebacks').select('*, reps(name)').order('chargeback_date',{ascending:false});
+    const{data:monthCBs}=await db.from('chargebacks').select('amount').gte('chargeback_date',start).lte('chargeback_date',end);
+    const monthTotal=(monthCBs||[]).reduce((a,b)=>a+(b.amount||0),0);
+    const monthCount=(monthCBs||[]).length;
+
+    main.innerHTML=`
+      <div class="page-header">
+        <div><div class="page-title">Chargebacks</div><div class="page-sub">Deducted from current month payout at time of generation</div></div>
+        <button class="btn btn-danger" onclick="addCBModal(${JSON.stringify((reps||[]).map(r=>({id:r.id,name:r.name}))).replace(/"/g,'&quot;')})">+ Log Chargeback</button>
+      </div>
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value" style="color:var(--red)">${monthCount}</div><div class="stat-sub">chargebacks logged</div></div>
+        <div class="stat-card"><div class="stat-label">Amount This Month</div><div class="stat-value mono" style="color:var(--red)">${fmt(monthTotal)}</div><div class="stat-sub">original sale value</div></div>
+        <div class="stat-card"><div class="stat-label">Commission Impact</div><div class="stat-value mono yellow">${fmt(monthTotal*0.10)}&ndash;${fmt(monthTotal*0.12)}</div><div class="stat-sub">est. deduction range</div></div>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header"><div class="table-title">All Chargebacks</div></div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Original Amount</th><th>Est. Commission Lost</th><th>Notes</th><th>Actions</th></tr></thead>
+          <tbody id="cb-tbody">${renderCBRows(allCBs||[],true)}</tbody>
+        </table></div>
+      </div>`;
+  } else {
+    // REP VIEW - see their own chargebacks
+    const{data:myCBs}=await db.from('chargebacks').select('*').eq('rep_id',currentUser.id).order('chargeback_date',{ascending:false});
+    const{data:rep}=await db.from('reps').select('tier').eq('id',currentUser.id).single();
+    const tier=rep?.tier||10;
+    const now=new Date();const start=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+    const monthCBs=(myCBs||[]).filter(c=>c.chargeback_date>=start);
+    const monthTotal=monthCBs.reduce((a,b)=>a+(b.amount||0),0);
+    const monthDeduct=monthTotal*commRate(tier);
+    const allTotal=(myCBs||[]).reduce((a,b)=>a+(b.amount||0),0);
+
+    main.innerHTML=`
+      <div class="page-header"><div><div class="page-title">My Chargebacks</div><div class="page-sub">These are deducted from your current month payout</div></div></div>
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value" style="color:var(--red)">${monthCBs.length}</div><div class="stat-sub">chargebacks</div></div>
+        <div class="stat-card"><div class="stat-label">Amount Charged Back</div><div class="stat-value mono" style="color:var(--red)">${fmt(monthTotal)}</div><div class="stat-sub">original sale value</div></div>
+        <div class="stat-card"><div class="stat-label">Commission Deducted</div><div class="stat-value mono yellow">${fmt(monthDeduct)}</div><div class="stat-sub">at your ${tier}% rate</div></div>
+      </div>
+      ${monthCBs.length>0?`<div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:16px 20px;margin-bottom:20px;font-size:13px;color:var(--text2)">
+        <b style="color:var(--red)">Heads up:</b> You have ${fmt(monthDeduct)} in commission deductions this month from chargebacks. This will be subtracted when your payout is generated on the 5th.
+      </div>`:''}
+      <div class="table-wrap">
+        <div class="table-header"><div class="table-title">Chargeback History</div></div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>Date</th><th>Client</th><th>Amount</th><th>Commission Lost</th><th>Notes</th></tr></thead>
+          <tbody>${renderCBRows(myCBs||[],false,tier)}</tbody>
+        </table></div>
+      </div>`;
+  }
+}
+
+function renderCBRows(cbs,admin,tier){
+  const cols=admin?7:5;
+  if(!cbs.length)return`<tr><td colspan="${cols}" class="empty-state">No chargebacks logged.</td></tr>`;
+  return cbs.map(c=>{
+    const t=tier||10;
+    const commLost=(c.amount||0)*commRate(t);
+    if(admin)return`<tr>
+      <td class="mono no-wrap">${c.chargeback_date||'&#8212;'}</td>
+      <td><b>${c.reps?.name||'&#8212;'}</b></td>
+      <td>${c.client_name||'&#8212;'}</td>
+      <td class="mono" style="color:var(--red)">-${fmt(c.amount)}</td>
+      <td class="mono yellow">~${fmt((c.amount||0)*0.10)}&ndash;${fmt((c.amount||0)*0.12)}</td>
+      <td style="font-size:12px;color:var(--text2);max-width:160px">${c.notes||'&#8212;'}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteCB('${c.id}')">&#10005;</button></td>
+    </tr>`;
+    return`<tr>
+      <td class="mono no-wrap">${c.chargeback_date||'&#8212;'}</td>
+      <td>${c.client_name||'&#8212;'}</td>
+      <td class="mono" style="color:var(--red)">-${fmt(c.amount)}</td>
+      <td class="mono yellow">-${fmt(commLost)}</td>
+      <td style="font-size:12px;color:var(--text2)">${c.notes||'&#8212;'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function addCBModal(reps){
+  const opts=reps.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  openModal('Log Chargeback',`
+    <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--text2)">
+      This will deduct the commission equivalent from this rep's next payout generation.
+    </div>
+    <div class="form-group"><label>Rep</label><select id="m-cb-rep">${opts}</select></div>
+    <div class="form-group"><label>Client Name</label><input type="text" id="m-cb-client" placeholder="Who charged back"></div>
+    <div class="inline-row">
+      <div class="form-group"><label>Original Sale Amount ($)</label><input type="number" id="m-cb-amount" placeholder="0" min="0"></div>
+      <div class="form-group"><label>Date</label><input type="date" id="m-cb-date" value="${new Date().toISOString().slice(0,10)}"></div>
+    </div>
+    <div class="form-group"><label>Notes (optional)</label><textarea id="m-cb-notes" placeholder="Reason, context..."></textarea></div>
+  `,[
+    {label:'Cancel',fn:closeModal,cls:'btn-secondary'},
+    {label:'Log Chargeback',fn:doAddCB,cls:'btn-danger'}
+  ]);
+}
+
+async function doAddCB(){
+  const rep_id=document.getElementById('m-cb-rep').value;
+  const client_name=document.getElementById('m-cb-client').value.trim();
+  const amount=parseFloat(document.getElementById('m-cb-amount').value);
+  const chargeback_date=document.getElementById('m-cb-date').value;
+  const notes=document.getElementById('m-cb-notes').value.trim();
+  if(!client_name||!amount||!chargeback_date){toast('Fill in all required fields.','error');return}
+  const{error}=await db.from('chargebacks').insert({rep_id,client_name,amount,chargeback_date,notes});
+  if(error){toast('Error: '+error.message,'error');return}
+  closeModal();toast('Chargeback logged.','success');navigate('chargebacks');
+}
+
+async function deleteCB(id){
+  if(!confirm('Delete this chargeback record?'))return;
+  await db.from('chargebacks').delete().eq('id',id);
+  toast('Deleted.','success');navigate('chargebacks');
+}
 
 // ---- HELP PAGE ----
 function renderHelp(){
