@@ -1498,12 +1498,17 @@ function formatStageLabel(key) {
 }
 
 // ── TABS ──
+let lastMetaData = null;
+
 function switchTab(el, panel) {
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById('panel-'+panel).classList.add('active');
-  setTimeout(() => Object.values(charts).forEach(c => c?.resize?.()), 50);
+  setTimeout(() => {
+    Object.values(charts).forEach(c => c?.resize?.());
+    if (panel === 'ads' && lastMetaData) renderMetaData(lastMetaData);
+  }, 50);
 }
 
 // ── DATE RANGE STATE ──
@@ -1574,6 +1579,7 @@ async function fetchMeta() {
 }
 
 function renderMetaData(d) {
+  lastMetaData = d;
   const { summary, accounts, daily } = d;
 
   setText('meta-spend',       formatMoney(summary.spend));
