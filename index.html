@@ -396,7 +396,7 @@ header {
     <button class="tab" onclick="switchTab(this,'revenue')">Revenue <span class="source-badge source-live" style="margin-left:6px">Live</span></button>
     <button class="tab" onclick="switchTab(this,'pipeline')">GHL Pipeline <span class="source-badge source-live" style="margin-left:6px">Live</span></button>
     <button class="tab" onclick="switchTab(this,'webinar')">Webinars <span class="source-badge source-live" style="margin-left:6px">Live</span></button>
-    <button class="tab" onclick="switchTab(this,'ads')">Meta Ads <span class="source-badge source-mock" style="margin-left:6px">Soon</span></button>
+    <button class="tab" onclick="switchTab(this,'ads')">Meta Ads <span class="source-badge source-live" style="margin-left:6px">Live</span></button>
   </div>
 
   <div id="errorBanner" class="error-banner"></div>
@@ -586,11 +586,43 @@ header {
 
   <!-- ═══ META ADS ═══ -->
   <div class="panel" id="panel-ads">
-    <div style="text-align:center; padding:60px 20px; color:var(--text-muted);">
-      <div style="font-family:'Fraunces',serif; font-size:32px; font-weight:300; color:var(--gold); margin-bottom:12px;">Meta Ads</div>
-      <div style="font-size:12px; margin-bottom:8px;">Connecting soon. Finishing Meta token setup first.</div>
-      <div style="font-size:11px; color:var(--text-muted);">Will pull: spend, CPL, ROAS, campaign breakdown across both ad accounts.</div>
+
+    <div class="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="kpi">
+        <div class="kpi-label">Total Spend <span class="source-badge source-live">Meta Live</span></div>
+        <div class="kpi-value" id="meta-spend">—</div>
+        <div class="kpi-delta delta-neutral" id="meta-spend-sub">Both accounts</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Leads <span class="source-badge source-live">Meta Live</span></div>
+        <div class="kpi-value green" id="meta-leads">—</div>
+        <div class="kpi-delta delta-neutral" id="meta-cpl">CPL: —</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Clicks <span class="source-badge source-live">Meta Live</span></div>
+        <div class="kpi-value" id="meta-clicks">—</div>
+        <div class="kpi-delta delta-neutral" id="meta-ctr">CTR: —</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Impressions <span class="source-badge source-live">Meta Live</span></div>
+        <div class="kpi-value" id="meta-impressions">—</div>
+        <div class="kpi-delta delta-neutral" id="meta-purchases-sub">— purchases</div>
+      </div>
     </div>
+
+    <!-- Daily spend chart -->
+    <div class="section-header" style="margin-top:24px;">Daily Spend</div>
+    <div style="height:200px; margin-bottom:24px;"><canvas id="metaDailyChart"></canvas></div>
+
+    <!-- Per-account breakdown -->
+    <div class="section-header">Account Breakdown</div>
+    <table class="data-table" style="margin-bottom:24px;">
+      <thead><tr>
+        <th>Account ID</th><th>Spend</th><th>Leads</th><th>CPL</th><th>Clicks</th><th>CTR</th><th>CPM</th>
+      </tr></thead>
+      <tbody id="metaAccountTable"><tr><td colspan="7" style="color:var(--text-muted);padding:16px 0;">Loading...</td></tr></tbody>
+    </table>
+
   </div>
 
   <!-- ═══ WEBINAR ═══ -->
@@ -1517,6 +1549,73 @@ function loadAllData() {
   fetchGHL();
   fetchWhop();
   fetchWebinar();
+  fetchMeta();
+}
+
+async function fetchMeta() {
+  try {
+    const start = new Date(activeRange.startTime).toISOString().slice(0,10);
+    const end   = new Date(activeRange.endTime).toISOString().slice(0,10);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res  = await fetch(`${WORKER_URL}/meta/summary?start=${start}&end=${end}`, { signal: controller.signal });
+    clearTimeout(timeout);
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      setText('meta-spend', 'Error');
+      setText('meta-spend-sub', data.error || 'Check worker logs');
+      return;
+    }
+    renderMetaData(data);
+  } catch(err) {
+    setText('meta-spend', err.name === 'AbortError' ? 'Timeout' : 'Error');
+    setText('meta-spend-sub', err.message);
+  }
+}
+
+function renderMetaData(d) {
+  const { summary, accounts, daily } = d;
+
+  setText('meta-spend',       formatMoney(summary.spend));
+  setText('meta-spend-sub',   'Both accounts combined');
+  setText('meta-leads',       summary.leads);
+  setText('meta-cpl',         `CPL: ${summary.cpl > 0 ? formatMoney(summary.cpl) : '—'}`);
+  setText('meta-clicks',      summary.clicks.toLocaleString());
+  setText('meta-ctr',         `CTR: ${summary.ctr}%`);
+  setText('meta-impressions', summary.impressions.toLocaleString());
+  setText('meta-purchases-sub', `${summary.purchases} purchases`);
+
+  // Daily spend chart
+  if (charts.metaDaily) charts.metaDaily.destroy();
+  const dCtx = document.getElementById('metaDailyChart');
+  if (dCtx && daily) {
+    const sorted = Object.entries(daily).sort((a,b) => a[0].localeCompare(b[0]));
+    charts.metaDaily = new Chart(dCtx, {
+      type: 'bar',
+      data: {
+        labels: sorted.map(([d]) => d.slice(5)),
+        datasets: [{ label: 'Spend ($)', data: sorted.map(([,v]) => v.spend || 0), backgroundColor: 'rgba(212,175,55,0.7)', borderRadius: 3 }]
+      },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:'#8892a4', font:{size:9}, maxRotation:45 } }, y:{ ticks:{ color:'#8892a4', callback: v => '$'+v }, beginAtZero:true } } }
+    });
+  }
+
+  // Account breakdown table
+  const tbody = document.getElementById('metaAccountTable');
+  if (tbody && accounts) {
+    tbody.innerHTML = accounts.map(a => {
+      if (a.error) return `<tr><td>${a.accountId}</td><td colspan="6" style="color:var(--red);">${a.error}</td></tr>`;
+      return `<tr>
+        <td style="font-size:11px;color:var(--text-muted);">${a.accountId}</td>
+        <td style="font-weight:500;">${formatMoney(a.spend)}</td>
+        <td class="green">${a.leads}</td>
+        <td>${a.cpl > 0 ? formatMoney(a.cpl) : '—'}</td>
+        <td>${a.clicks.toLocaleString()}</td>
+        <td>${a.ctr.toFixed(2)}%</td>
+        <td>${formatMoney(a.cpm)}</td>
+      </tr>`;
+    }).join('');
+  }
 }
 
 // ── RENDER UPCOMING APPOINTMENTS ──
@@ -1552,6 +1651,7 @@ activeRange = { startTime: new Date(Date.now() - 30 * 86400000).getTime(), endTi
 fetchGHL();
 setTimeout(fetchWhop,    800);
 setTimeout(fetchWebinar, 1600);
+setTimeout(fetchMeta,    2400);
 
 // Auto-refresh every 15 min
 setInterval(loadAllData, 15 * 60 * 1000);
